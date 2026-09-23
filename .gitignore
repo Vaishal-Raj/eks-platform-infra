@@ -1,0 +1,10 @@
+#Mac files
+.DS_Store 
+
+# Terraform working files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
