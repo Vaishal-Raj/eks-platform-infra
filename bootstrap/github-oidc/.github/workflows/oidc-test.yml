@@ -1,0 +1,37 @@
+name: OIDC smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # lets the job request an OIDC token from GitHub
+  contents: read
+
+jobs:
+  plan-role:
+    name: Plan role (read-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-plan
+          aws-region: us-east-1
+
+      - name: Who am I?
+        run: aws sts get-caller-identity
+
+      - name: Can I read the state bucket?
+        run: aws s3 ls s3://tfstate-client-a-dev-${{ vars.AWS_ACCOUNT_ID }}/ --recursive
+
+  apply-role-dev:
+    name: Apply role (dev environment)
+    runs-on: ubuntu-latest
+    environment: dev          # changes the token's sub to ...:environment:dev
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
+          aws-region: us-east-1
+
+      - name: Who am I?
+        run: aws sts get-caller-identity
