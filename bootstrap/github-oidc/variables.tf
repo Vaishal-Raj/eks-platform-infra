@@ -16,10 +16,22 @@ variable "github_repo" {
   default     = "eks-platform-infra"
 }
 
+variable "github_owner_id" {
+  description = "Numeric GitHub owner ID (part of the immutable OIDC subject)"
+  type        = string
+  default     = "114581488"
+}
+
+variable "github_repo_id" {
+  description = "Numeric GitHub repo ID (part of the immutable OIDC subject)"
+  type        = string
+  default     = "1383398911"
+}
+
 variable "environments" {
   description = "GitHub Environments that get their own apply role"
   type        = set(string)
-  default     = ["dev", "staging", "prod"]
+  default     = ["dev"]
 }
 
 variable "state_bucket" {

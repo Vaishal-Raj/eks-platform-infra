@@ -12,6 +12,10 @@ provider "aws" {
 
 locals {
   repo = "${var.github_owner}/${var.github_repo}"
+
+  # GitHub immutable OIDC subject: repo:<owner>@<owner-id>/<repo>@<repo-id>
+
+  sub_prefix = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -43,8 +47,8 @@ data "aws_iam_policy_document" "plan_trust" {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${local.repo}:pull_request",
-        "repo:${local.repo}:ref:refs/heads/*",
+        "${local.sub_prefix}:pull_request",
+        "${local.sub_prefix}:ref:refs/heads/*",
       ]
     }
   }
@@ -104,7 +108,7 @@ data "aws_iam_policy_document" "apply_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.repo}:environment:${each.key}"]
+      values   = ["${local.sub_prefix}:environment:${each.key}"]
     }
   }
 }
@@ -116,4 +120,20 @@ resource "aws_iam_role" "apply" {
   description          = "GitHub Actions: terraform apply for the ${each.key} environment"
   assume_role_policy   = data.aws_iam_policy_document.apply_trust[each.key].json
   max_session_duration = 3600
+}
+
+
+resource "aws_iam_role_policy" "plan_state_lock" {
+  name   = "terraform-state-lock"
+  role   = aws_iam_role.plan.id
+  policy = data.aws_iam_policy_document.plan_state_lock.json
+}
+
+# POC only: broad permissions so Terraform can create VPC, EKS, RDS, IAM roles, ...
+# Tighten later with a permissions boundary or a scoped policy.
+resource "aws_iam_role_policy_attachment" "apply_admin" {
+  for_each = var.environments
+
+  role       = aws_iam_role.apply[each.key].name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
