@@ -25,7 +25,7 @@ locals {
 
 resource "aws_s3_bucket" "state" {
   bucket = local.bucket_name
-#   force_destroy = true # temporary: lets Terraform delete all object versions
+  #   force_destroy = true # temporary: lets Terraform delete all object versions
   lifecycle {
     prevent_destroy = true
   }
