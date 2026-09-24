@@ -1,0 +1,11 @@
+{
+  "network": {
+    "az_count": 2
+  },
+  "rds": {
+    "instance_class": "db.t4g.micro",
+    "allocated_storage": 20,
+    "multi_az": false,
+    "backup_retention_days": 1
+  }
+}
