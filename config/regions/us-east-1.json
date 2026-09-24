@@ -1,0 +1,5 @@
+{
+  "network": {
+    "exclude_zone_ids": ["use1-az3"]
+  }
+}

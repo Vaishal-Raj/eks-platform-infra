@@ -1,0 +1,169 @@
+name: Environment Orchestrator
+
+# M4: provision or update one client environment from its resolved config.
+# The form chooses WHAT to run. Values come from config/ (reviewed in PRs).
+# override_json is a plan-only what-if; it is refused for apply to avoid drift.
+
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: Client
+        type: choice
+        options:
+          - client-a
+      environment:
+        description: Environment
+        type: environment
+        default: dev
+      action:
+        description: What to do
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      stacks:
+        description: Which layers
+        type: choice
+        options:
+          - all
+          - 10-network
+        default: all
+      override_json:
+        description: 'What-if override, PLAN ONLY. e.g. {"rds":{"multi_az":true}}'
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: orchestrator-${{ inputs.client }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  # Inputs go through env vars, never ${{ }} inside run: (prevents script injection)
+  CLIENT: ${{ inputs.client }}
+  ENVIRONMENT: ${{ inputs.environment }}
+  ACTION: ${{ inputs.action }}
+  STACKS: ${{ inputs.stacks }}
+  OVERRIDE_JSON: ${{ inputs.override_json }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  resolve:
+    name: Validate and resolve config
+    runs-on: ubuntu-latest
+    outputs:
+      account_id: ${{ steps.resolve.outputs.account_id }}
+      region: ${{ steps.resolve.outputs.region }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: Refuse overrides on apply
+        if: inputs.action == 'apply' && inputs.override_json != ''
+        run: |
+          echo "::error::override_json is a what-if for plan only. To change a value for real, open a PR to config/clients/$CLIENT/$ENVIRONMENT.json"
+          exit 1
+
+      - name: Validate and resolve
+        id: resolve
+        run: python scripts/config.py resolve --client "$CLIENT" --env "$ENVIRONMENT" --override-json "$OVERRIDE_JSON"
+
+      - name: Show resolved config
+        run: |
+          {
+            echo "### $CLIENT / $ENVIRONMENT: $ACTION ($STACKS)"
+            if [ -n "$OVERRIDE_JSON" ]; then echo "> ⚠️ what-if override: \`$OVERRIDE_JSON\`"; fi
+            echo '```json'
+            cat "build/$CLIENT/$ENVIRONMENT/config.tfvars.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  plan:
+    name: plan
+    if: inputs.action == 'plan'
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ needs.resolve.outputs.account_id }}:role/gha-eks-infra-plan
+          aws-region: ${{ needs.resolve.outputs.region }}
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          python scripts/config.py resolve --client "$CLIENT" --env "$ENVIRONMENT" --override-json "$OVERRIDE_JSON" > /dev/null
+          if [ "$STACKS" = "all" ]; then stacks=$(ls stacks | sort); else stacks="$STACKS"; fi
+          for stack in $stacks; do
+            echo "::group::plan $stack"
+            scripts/tf-stack.sh "$CLIENT" "$ENVIRONMENT" "$stack" plan
+            echo "::endgroup::"
+            {
+              echo "### \`$stack\`"
+              echo '```'
+              terraform -chdir="stacks/$stack" show -no-color "$PWD/build/$CLIENT/$ENVIRONMENT/$stack.tfplan"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  apply:
+    name: apply
+    if: inputs.action == 'apply'
+    needs: resolve
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ needs.resolve.outputs.account_id }}:role/gha-eks-infra-apply-${{ inputs.environment }}
+          aws-region: ${{ needs.resolve.outputs.region }}
+
+      - name: Apply (in stack order)
+        run: |
+          set -euo pipefail
+          python scripts/config.py resolve --client "$CLIENT" --env "$ENVIRONMENT" > /dev/null
+          if [ "$STACKS" = "all" ]; then stacks=$(ls stacks | sort); else stacks="$STACKS"; fi
+          for stack in $stacks; do
+            echo "::group::apply $stack"
+            scripts/tf-stack.sh "$CLIENT" "$ENVIRONMENT" "$stack" apply
+            echo "::endgroup::"
+            echo "✅ applied \`$stack\`" >> "$GITHUB_STEP_SUMMARY"
+          done

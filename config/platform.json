@@ -1,0 +1,6 @@
+{
+  "tags": {
+    "Project": "eks-platform",
+    "ManagedBy": "terraform"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Sizing sections (profiles, and the resolved result)",
+  "type": "object",
+  "required": ["network", "rds"],
+  "properties": {
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["az_count"],
+      "properties": {
+        "az_count":         { "type": "integer", "minimum": 2, "maximum": 3 },
+        "exclude_zone_ids": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "rds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_class", "allocated_storage", "multi_az", "backup_retention_days"],
+      "properties": {
+        "instance_class":        { "type": "string", "pattern": "^db\\.[a-z0-9]+\\.[a-z0-9]+$" },
+        "allocated_storage":     { "type": "integer", "minimum": 20, "maximum": 1000 },
+        "multi_az":              { "type": "boolean" },
+        "backup_retention_days": { "type": "integer", "minimum": 0, "maximum": 35 }
+      }
+    }
+  }
+}
