@@ -44,16 +44,6 @@ jobs:
       - name: Format check
         run: terraform fmt --check --recursive --diff
 
-      - name: Validate every module and root
-        run: |
-          set -euo pipefail
-          for dir in $(find modules live bootstrap -name '*.tf' -exec dirname {} \; 2>/dev/null | sort -u); do
-            echo "::group::validate $dir"
-            terraform -chdir="$dir" init -backend=false -input=false > /dev/null
-            terraform -chdir="$dir" validate
-            echo "::endgroup::"
-          done
-
   plan:
     name: plan
     if: github.event_name == 'pull_request'

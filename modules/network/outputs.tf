@@ -11,7 +11,7 @@ output "azs" {
 }
 
 output "private_subnet_ids" {
-  value = [for s in aws_aws_subnet.private : s.id]
+  value = [for s in aws_subnet.private : s.id]
 }
 
 output "private_subnet_cidrs" {
