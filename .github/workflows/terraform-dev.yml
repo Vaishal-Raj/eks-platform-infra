@@ -4,12 +4,10 @@ on:
   pull_request:
     branches: [dev]
     paths:
-      - "live/**"
       - ".github/workflows/terraform-dev.yml"
   push:
     branches: [dev]
     paths:
-      - "live/**"
       - ".github/workflows/terraform-dev.yml"
   workflow_dispatch:
 
