@@ -5,8 +5,8 @@ data "aws_availability_zones" "available" {
 
 locals {
   azs              = slice(data.aws_availability_zones.available.names, 0, var.az_count)
-  private_subnets  = { for i, az in local.azs : az => cidrsubnet(var.var.vpc_cidr, 4, i) }
-  isolated_subnets = { for i, az in local.azs : az => cidrsubnet(var.var.vpc_cidr, 8, 48 + i) }
+  private_subnets  = { for i, az in local.azs : az => cidrsubnet(var.vpc_cidr, 4, i) }
+  isolated_subnets = { for i, az in local.azs : az => cidrsubnet(var.vpc_cidr, 8, 48 + i) }
 }
 
 resource "aws_vpc" "this" {

@@ -1,0 +1,93 @@
+name: Terraform (dev)
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - "modules/**"
+      - "live/**"
+      - ".github/workflows/terraform-dev.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "modules/**"
+      - "live/**"
+      - ".github/workflows/terraform-dev.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC token for AWS
+  contents: read
+
+# Never run two Terraform jobs against dev at once, and never cancel one halfway
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  checks:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt --check --recursive --diff
+
+  plan:
+    name: plan
+    if: github.event_name == 'pull_request'
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-plan
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I?
+        run: aws sts get-caller-identity
+
+      - name: Can I read the state bucket?
+        run: aws s3 ls s3://tfstate-client-a-dev-${{ vars.AWS_ACCOUNT_ID }}/ --recursive
+
+  apply:
+    name: apply
+    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I?
+        run: aws sts get-caller-identity
+
+      
