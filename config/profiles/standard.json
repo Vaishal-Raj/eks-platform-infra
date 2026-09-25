@@ -1,0 +1,18 @@
+{
+  "network": {
+    "az_count": 3
+  },
+  "endpoints": {
+    "enabled": true,
+    "interface_services": [
+      "ecr.api",
+      "ecr.dkr",
+      "sts",
+      "logs",
+      "secretsmanager",
+      "ec2",
+      "elasticloadbalancing"
+    ],
+    "enable_s3_gateway": true
+  }
+}

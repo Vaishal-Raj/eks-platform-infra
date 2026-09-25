@@ -8,3 +8,6 @@
 *.tfplan
 tfplan
 crash.log
+
+build/
+.venv/
