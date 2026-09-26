@@ -1,15 +1,23 @@
 name: Terraform (dev)
 
+# PR into dev  -> checks + plan every dev client, every stack (read-only role)
+# merge to dev -> checks + apply every dev client, every stack (dev environment role)
+
 on:
   pull_request:
     branches: [dev]
     paths:
+      - "config/**"
+      - "scripts/**"
+      - "stacks/**"
       - ".github/workflows/terraform-dev.yml"
   push:
     branches: [dev]
     paths:
+      - "config/**"
+      - "scripts/**"
+      - "stacks/**"
       - ".github/workflows/terraform-dev.yml"
-  workflow_dispatch:
 
 permissions:
   id-token: write   # OIDC token for AWS
@@ -32,13 +40,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Validate configs
+        run: |
+          pip install -r scripts/requirements.txt
+          python scripts/config.py validate
+
       - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
       - name: Format check
-        run: terraform fmt --check --recursive --diff
+        run: terraform fmt -check -recursive -diff
+
+      - name: Validate stacks and bootstrap roots
+        run: |
+          set -euo pipefail
+          for dir in stacks/* bootstrap/*; do
+            echo "::group::validate $dir"
+            terraform -chdir="$dir" init -backend=false -input=false > /dev/null
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done
 
   plan:
     name: plan
@@ -47,6 +74,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -58,32 +91,60 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-plan
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Who am I?
-        run: aws sts get-caller-identity
+      - name: Plan every dev client, every stack
+        run: |
+          set -euo pipefail
+          for cfg in config/clients/*/dev.json; do
+            client=$(basename "$(dirname "$cfg")")
+            python scripts/config.py resolve --client "$client" --env dev > /dev/null
+            for stack in $(ls stacks | sort); do
+              echo "::group::plan $client/dev/$stack"
+              scripts/tf-stack.sh "$client" dev "$stack" plan
+              echo "::endgroup::"
+              {
+                echo "### \`$client / dev / $stack\`"
+                echo '```'
+                terraform -chdir="stacks/$stack" show -no-color "$PWD/build/$client/dev/$stack.tfplan"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
 
-      - name: Can I read the state bucket?
-        run: aws s3 ls s3://tfstate-client-a-dev-${{ vars.AWS_ACCOUNT_ID }}/ --recursive
+  # apply:
+  #   name: apply
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+  #   needs: checks
+  #   runs-on: ubuntu-latest
+  #   environment: dev
+  #   steps:
+  #     - uses: actions/checkout@v7
 
-  apply:
-    name: apply
-    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
-    needs: checks
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v7
+  #     - uses: actions/setup-python@v7
+  #       with:
+  #         python-version: "3.12"
 
-      - uses: hashicorp/setup-terraform@v4
-        with:
-          terraform_version: 1.15.8
-          terraform_wrapper: false
+  #     - run: pip install -r scripts/requirements.txt
 
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
-          aws-region: ${{ env.AWS_REGION }}
+  #     - uses: hashicorp/setup-terraform@v4
+  #       with:
+  #         terraform_version: 1.15.8
+  #         terraform_wrapper: false
 
-      - name: Who am I?
-        run: aws sts get-caller-identity
+  #     - uses: aws-actions/configure-aws-credentials@v6
+  #       with:
+  #         role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
+  #         aws-region: ${{ env.AWS_REGION }}
 
-      
+  #     - name: Apply every dev client, every stack (in order)
+  #       run: |
+  #         set -euo pipefail
+  #         for cfg in config/clients/*/dev.json; do
+  #           client=$(basename "$(dirname "$cfg")")
+  #           python scripts/config.py resolve --client "$client" --env dev > /dev/null
+  #           for stack in $(ls stacks | sort); do
+  #             echo "::group::apply $client/dev/$stack"
+  #             scripts/tf-stack.sh "$client" dev "$stack" apply
+  #             echo "::endgroup::"
+  #             echo "applied \`$client / dev / $stack\`" >> "$GITHUB_STEP_SUMMARY"
+  #           done
+  #         done
