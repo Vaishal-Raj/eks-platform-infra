@@ -1,0 +1,20 @@
+{
+  "client_id": "client-b",
+  "environment": "dev",
+  "profile": "small",
+  "account_id": "264760299713",
+  "region": "us-east-1",
+  "vpc_cidr": "10.2.0.0/16",
+  "exclude_zone_ids": [
+    "use1-az3"
+  ],
+  "tags": {
+    "CostCenter": "client-b"
+  },
+  "overrides": {
+    "endpoints": {
+      "enabled": false,
+      "enable_s3_gateway": false
+    }
+  }
+}
