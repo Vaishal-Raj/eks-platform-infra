@@ -4,6 +4,9 @@
   python scripts/config.py validate
   python scripts/config.py resolve --client client-a --env dev
   python scripts/config.py resolve --client client-a --env dev --override-json '{"network":{"az_count":3}}'
+  python scripts/config.py profiles
+  python scripts/config.py write-client --client client-b --env dev --profile small \
+      --region us-east-1 --vpc-cidr 10.1.0.0/16 --account-id 264760299713 --az-count 3
 
 Resolution order (later wins):
   profile -> client values -> client overrides -> what-if (plan only)
@@ -175,6 +178,155 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+# ====================== onboard / update a client from the GitHub form
+
+# Form fields that may override a profile value: form name -> (section, key, parse)
+FORM_FIELDS = {
+    "az_count":   ("network", "az_count", int),
+    "endpoints":  ("endpoints", "enabled", lambda v: v == "on"),
+    "s3_gateway": ("endpoints", "enable_s3_gateway", lambda v: v == "on"),
+}
+
+# Region facts, not client choices: AZs to avoid (EKS has no control plane in use1-az3)
+REGION_EXCLUDED_ZONES = {"us-east-1": ["use1-az3"]}
+
+
+def flatten(d: dict, prefix: str = "") -> dict:
+    """{"network": {"az_count": 2}} -> {"network.az_count": 2}"""
+    out = {}
+    for key, value in d.items():
+        if isinstance(value, dict):
+            out.update(flatten(value, f"{prefix}{key}."))
+        else:
+            out[f"{prefix}{key}"] = value
+    return out
+
+
+def diff(desired: dict, base: dict) -> dict:
+    """Only the (nested) values in `desired` that differ from `base`. These become the overrides."""
+    out = {}
+    for key, value in desired.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            nested = diff(value, base[key])
+            if nested:
+                out[key] = nested
+        elif base.get(key) != value:
+            out[key] = value
+    return out
+
+
+def fmt(value) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
+def summary(text: str) -> None:
+    """Print, and also add to the GitHub Actions run summary when running in CI."""
+    print(text)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+            fh.write(text + "\n")
+
+
+def cmd_profiles(_: argparse.Namespace) -> int:
+    profiles = {p.stem: flatten(load(p)) for p in sorted((CONFIG / "profiles").glob("*.json"))}
+    names = list(profiles)
+    keys = sorted({k for p in profiles.values() for k in p})
+    lines = [
+        "### Available profiles",
+        "",
+        "| Setting | " + " | ".join(f"`{n}`" for n in names) + " |",
+        "|---|" + "---|" * len(names),
+    ]
+    for key in keys:
+        lines.append(f"| `{key}` | " + " | ".join(fmt(profiles[n].get(key, "—")) for n in names) + " |")
+    summary("\n".join(lines) + "\n")
+    return 0
+
+
+def cmd_write_client(args: argparse.Namespace) -> int:
+    path = CONFIG / "clients" / args.client / f"{args.env}.json"
+    profile_path = CONFIG / "profiles" / f"{args.profile}.json"
+    if not profile_path.exists():
+        print(f"FAIL  unknown profile '{args.profile}'")
+        return 1
+    profile = load(profile_path)
+    existing = load(path) if path.exists() else None
+
+    if existing:
+        # Identity can't change on an existing client: it would rebuild (or orphan) everything
+        for field, new in (("region", args.region), ("vpc_cidr", args.vpc_cidr)):
+            if new and new != existing[field]:
+                print(f"FAIL  {field} can't change for an existing client ({existing[field]} -> {new})")
+                return 1
+        client = copy.deepcopy(existing)
+        if args.cost_center:
+            client["tags"] = {**client.get("tags", {}), "CostCenter": args.cost_center}
+    else:
+        missing = [f for f, v in (("region", args.region), ("vpc_cidr", args.vpc_cidr)) if not v]
+        if missing:
+            print(f"FAIL  {' and '.join(missing)} required for a new client")
+            return 1
+        client = {
+            "client_id": args.client,
+            "environment": args.env,
+            "profile": args.profile,
+            "account_id": args.account_id,
+            "region": args.region,
+            "vpc_cidr": args.vpc_cidr,
+            "exclude_zone_ids": REGION_EXCLUDED_ZONES.get(args.region, []),
+            "tags": {"CostCenter": args.cost_center or args.client},
+            "overrides": {},
+        }
+    client["profile"] = args.profile
+
+    # Start from what the client gets on this profile today (existing overrides kept),
+    # apply the form's edits, then store only what differs from the profile.
+    desired = deep_merge(profile, client.get("overrides", {}))
+    for name, (section, key, parse) in FORM_FIELDS.items():
+        choice = getattr(args, name)
+        if choice == "profile":
+            desired[section][key] = profile[section][key]
+        elif choice != "unchanged":
+            desired[section][key] = parse(choice)
+    client["overrides"] = diff(desired, profile)
+
+    errors = schema_errors(client, "client.schema.json") + schema_errors(desired, "profile.schema.json")
+    if errors:
+        print("FAIL  " + "\n      ".join(errors))
+        return 1
+
+    before, after = flatten(profile), flatten(desired)
+    lines = [
+        f"### {'Update' if existing else 'Onboard'} `{args.client} / {args.env}`, profile `{args.profile}`",
+        "",
+        "| Setting | profile | final |",
+        "|---|---|---|",
+    ]
+    for key, value in after.items():
+        mark = " ✏️" if value != before.get(key) else ""
+        lines.append(f"| `{key}` | {fmt(before.get(key))} | **{fmt(value)}**{mark} |")
+    lines += ["", "Stored as `overrides` (only what differs from the profile):", "```json",
+              json.dumps(client["overrides"], indent=2), "```", ""]
+    summary("\n".join(lines))
+
+    if client == existing:  # nothing changed: leave the file (and its formatting) untouched
+        print(f"no changes to {path.relative_to(ROOT)}")
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(client, indent=2) + "\n")
+        print(f"wrote {path.relative_to(ROOT)}")
+
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+            fh.write(f"is_new={'false' if existing else 'true'}\n")
+            fh.write(f"region={client['region']}\n")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate and resolve client configs")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -185,6 +337,21 @@ def main() -> int:
     p.add_argument("--env", required=True)
     p.add_argument("--override-json", default="")
     p.set_defaults(func=cmd_resolve)
+
+    sub.add_parser("profiles", help="print every profile's specs as a table").set_defaults(func=cmd_profiles)
+
+    w = sub.add_parser("write-client", help="create or update a client file from the form")
+    w.add_argument("--client", required=True)
+    w.add_argument("--env", required=True)
+    w.add_argument("--profile", required=True)
+    w.add_argument("--region", default="")
+    w.add_argument("--vpc-cidr", default="")
+    w.add_argument("--account-id", default="")
+    w.add_argument("--cost-center", default="")
+    w.add_argument("--az-count", choices=["unchanged", "profile", "2", "3"], default="unchanged")
+    w.add_argument("--endpoints", choices=["unchanged", "profile", "on", "off"], default="unchanged")
+    w.add_argument("--s3-gateway", choices=["unchanged", "profile", "on", "off"], default="unchanged")
+    w.set_defaults(func=cmd_write_client)
 
     args = parser.parse_args()
     return args.func(args)

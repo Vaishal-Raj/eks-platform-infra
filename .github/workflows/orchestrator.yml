@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
     inputs:
       client:
-        description: Client
-        type: choice
-        options:
-          - client-a
+        description: "Client name (must exist in config/clients/)"
+        type: string
+        required: true
+        default: client-a
       environment:
         description: Environment
         type: environment

@@ -33,9 +33,3 @@ variable "environments" {
   type        = set(string)
   default     = ["dev"]
 }
-
-variable "state_bucket" {
-  description = "Terraform state bucket the plan role may lock"
-  type        = string
-  default     = "tfstate-client-a-dev-264760299713"
-}
