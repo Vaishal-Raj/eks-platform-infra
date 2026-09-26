@@ -1,0 +1,16 @@
+{
+  "client_id": "client-a",
+  "environment": "dev",
+  "profile": "small",
+
+  "account_id": "264760299713",
+  "region": "us-east-1",
+  "vpc_cidr": "10.0.0.0/16",
+  "exclude_zone_ids": ["use1-az3"],
+
+  "tags": {
+    "CostCenter": "client-a"
+  },
+
+  "overrides": {}
+}

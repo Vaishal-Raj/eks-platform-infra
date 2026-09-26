@@ -1,0 +1,148 @@
+name: Environment Orchestrator
+
+# Plan or apply one client environment on demand from the Actions tab.
+# Values come from config/ (reviewed in PRs); the form only chooses WHAT to run.
+# override_json is a plan-only what-if and is refused on apply, to avoid drift.
+
+on:
+  workflow_dispatch:
+    inputs:
+      client:
+        description: Client
+        type: choice
+        options:
+          - client-a
+      environment:
+        description: Environment
+        type: environment
+        default: dev
+      action:
+        description: What to do
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+      stack:
+        description: Which layer
+        type: choice
+        options:
+          - all
+          - 10-network
+        default: all
+      override_json:
+        description: 'What-if (PLAN ONLY), e.g. {"network":{"az_count":3}}'
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: orchestrator-${{ inputs.client }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  # Inputs go through env vars, never ${{ }} inside run: (prevents script injection)
+  CLIENT: ${{ inputs.client }}
+  ENVIRONMENT: ${{ inputs.environment }}
+  STACK: ${{ inputs.stack }}
+  OVERRIDE_JSON: ${{ inputs.override_json }}
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  plan:
+    name: plan
+    if: inputs.action == 'plan'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-plan
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve config
+        run: |
+          python scripts/config.py resolve --client "$CLIENT" --env "$ENVIRONMENT" --override-json "$OVERRIDE_JSON"
+          {
+            echo "### Resolved config: $CLIENT / $ENVIRONMENT"
+            if [ -n "$OVERRIDE_JSON" ]; then echo "> ⚠️ what-if: \`$OVERRIDE_JSON\`"; fi
+            echo '```json'
+            cat "build/$CLIENT/$ENVIRONMENT/config.tfvars.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          if [ "$STACK" = "all" ]; then stacks=$(ls stacks | sort); else stacks="$STACK"; fi
+          for stack in $stacks; do
+            echo "::group::plan $stack"
+            scripts/tf-stack.sh "$CLIENT" "$ENVIRONMENT" "$stack" plan
+            echo "::endgroup::"
+            {
+              echo "### Plan: \`$stack\`"
+              echo '```'
+              terraform -chdir="stacks/$stack" show -no-color "$PWD/build/$CLIENT/$ENVIRONMENT/$stack.tfplan"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  apply:
+    name: apply
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Refuse what-if on apply
+        if: inputs.override_json != ''
+        run: |
+          echo "::error::override_json is a what-if for plan only. To change a value for real, open a PR to config/clients/$CLIENT/$ENVIRONMENT.json"
+          exit 1
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-${{ inputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Apply (in stack order)
+        run: |
+          set -euo pipefail
+          python scripts/config.py resolve --client "$CLIENT" --env "$ENVIRONMENT" > /dev/null
+          if [ "$STACK" = "all" ]; then stacks=$(ls stacks | sort); else stacks="$STACK"; fi
+          for stack in $stacks; do
+            echo "::group::apply $stack"
+            scripts/tf-stack.sh "$CLIENT" "$ENVIRONMENT" "$stack" apply
+            echo "::endgroup::"
+            echo " applied \`$CLIENT / $ENVIRONMENT / $stack\`" >> "$GITHUB_STEP_SUMMARY"
+          done
