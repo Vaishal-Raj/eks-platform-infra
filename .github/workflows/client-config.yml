@@ -1,0 +1,189 @@
+name: Onboard / update client
+
+# Pick a profile, optionally change some of its values, and save the client's config.
+# Edits are stored as the client's `overrides` (only what differs from the profile).
+#   new client      -> validate -> create its state bucket -> push a branch -> you open the PR
+#   existing client -> validate -> push a branch -> you open the PR
+# "Preview only" shows the profile specs and the final values without changing anything.
+
+on:
+  workflow_dispatch:
+    inputs:
+      client_id:
+        description: "Client name (lowercase, e.g. client-b)"
+        type: string
+        required: true
+      environment:
+        description: Environment
+        type: environment
+        default: dev
+      profile:
+        description: Size profile (specs are shown in the run summary)
+        type: choice
+        options:
+          - small
+          - standard
+        default: small
+      region:
+        description: AWS region (new clients only; can't change later)
+        type: choice
+        options:
+          - unchanged
+          - us-east-1
+          - ap-south-1
+        default: unchanged
+      vpc_cidr:
+        description: "VPC CIDR, a free /16 (new clients only), e.g. 10.1.0.0/16"
+        type: string
+        required: false
+        default: ""
+      az_count:
+        description: "Override: AZ count"
+        type: choice
+        options:
+          - unchanged
+          - profile
+          - "2"
+          - "3"
+        default: unchanged
+      endpoints:
+        description: "Override: VPC interface endpoints"
+        type: choice
+        options:
+          - unchanged
+          - profile
+          - "on"
+          - "off"
+        default: unchanged
+      s3_gateway:
+        description: "Override: S3 gateway endpoint"
+        type: choice
+        options:
+          - unchanged
+          - profile
+          - "on"
+          - "off"
+        default: unchanged
+      cost_center:
+        description: "CostCenter tag (optional; new clients default to the client name)"
+        type: string
+        required: false
+        default: ""
+      preview_only:
+        description: "Preview only: show specs and final values, change nothing"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write   # OIDC, to create a new client's state bucket
+  contents: write   # push the config branch
+
+concurrency:
+  group: client-config-${{ inputs.client_id }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  # Inputs go through env vars, never ${{ }} inside run: (prevents script injection)
+  CLIENT: ${{ inputs.client_id }}
+  ENVIRONMENT: ${{ inputs.environment }}
+  PROFILE: ${{ inputs.profile }}
+  REGION: ${{ inputs.region }}
+  VPC_CIDR: ${{ inputs.vpc_cidr }}
+  AZ_COUNT: ${{ inputs.az_count }}
+  ENDPOINTS: ${{ inputs.endpoints }}
+  S3_GATEWAY: ${{ inputs.s3_gateway }}
+  COST_CENTER: ${{ inputs.cost_center }}
+  ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  client-config:
+    name: ${{ inputs.preview_only && 'Preview' || 'Save' }} ${{ inputs.client_id }} / ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: Show all profiles
+        run: python scripts/config.py profiles
+
+      - name: Build the client config (profile + your edits)
+        id: write
+        run: |
+          region="$REGION"
+          if [ "$region" = "unchanged" ]; then region=""; fi
+          python scripts/config.py write-client \
+            --client "$CLIENT" --env "$ENVIRONMENT" --profile "$PROFILE" \
+            --region "$region" --vpc-cidr "$VPC_CIDR" --account-id "$ACCOUNT_ID" \
+            --cost-center "$COST_CENTER" \
+            --az-count "$AZ_COUNT" --endpoints "$ENDPOINTS" --s3-gateway "$S3_GATEWAY"
+
+      - name: Validate (schemas, CIDR overlap with every other client)
+        run: python scripts/config.py validate
+
+      - name: Stop here (preview only)
+        if: inputs.preview_only
+        run: echo "> 👀 Preview only. Nothing was created or pushed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check for changes
+        id: changes
+        if: ${{ !inputs.preview_only }}
+        run: |
+          if [ -z "$(git status --porcelain config/clients)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "> ℹ️ No changes: the config already matches. Nothing pushed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---- new clients only: create the state bucket ----
+      - uses: hashicorp/setup-terraform@v4
+        if: ${{ !inputs.preview_only && steps.write.outputs.is_new == 'true' }}
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: ${{ !inputs.preview_only && steps.write.outputs.is_new == 'true' }}
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-${{ inputs.environment }}
+          aws-region: ${{ steps.write.outputs.region }}
+
+      - name: Create the client's state bucket
+        if: ${{ !inputs.preview_only && steps.write.outputs.is_new == 'true' }}
+        env:
+          CLIENT_REGION: ${{ steps.write.outputs.region }}
+        run: |
+          set -euo pipefail
+          # Each client's bootstrap state gets its own key, so client-a's is never touched
+          terraform -chdir=bootstrap/state-backend init -input=false -reconfigure \
+            -backend-config="key=bootstrap/state-backend/$CLIENT-$ENVIRONMENT.tfstate"
+          terraform -chdir=bootstrap/state-backend apply -input=false -auto-approve \
+            -var "client_id=$CLIENT" -var "environment=$ENVIRONMENT" -var "region=$CLIENT_REGION"
+          echo "- 🪣 State bucket \`tfstate-$CLIENT-$ENVIRONMENT-$ACCOUNT_ID\` ready" >> "$GITHUB_STEP_SUMMARY"
+
+      # ---- push the config to a branch; you open the PR ----
+      - name: Push the config to a branch
+        if: ${{ !inputs.preview_only && steps.changes.outputs.changed == 'true' }}
+        run: |
+          set -euo pipefail
+          branch="client-config/$CLIENT-$ENVIRONMENT-$GITHUB_RUN_NUMBER"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add "config/clients/$CLIENT/$ENVIRONMENT.json"
+          git commit -m "Client config: $CLIENT / $ENVIRONMENT (profile: $PROFILE)"
+          git push -u origin "$branch"
+          {
+            echo ""
+            echo "### Next step"
+            echo "[**Open a pull request**]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/dev...$branch?expand=1) into \`dev\`."
+            echo "Its plan shows exactly what changes in AWS; merging applies it."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -71,7 +71,7 @@ resource "aws_iam_role_policy_attachment" "plan_readonly" {
 data "aws_iam_policy_document" "plan_state_lock" {
   statement {
     actions   = ["s3:PutObject", "s3:DeleteObject"]
-    resources = ["arn:aws:s3:::${var.state_bucket}/*.tflock"]
+    resources = ["arn:aws:s3:::tfstate-*/*.tflock"] # every client's state bucket
   }
 }
 
