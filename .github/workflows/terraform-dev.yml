@@ -110,41 +110,41 @@ jobs:
             done
           done
 
-  # apply:
-  #   name: apply
-  #   if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
-  #   needs: checks
-  #   runs-on: ubuntu-latest
-  #   environment: dev
-  #   steps:
-  #     - uses: actions/checkout@v7
+  apply:
+    name: apply
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: checks
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v7
 
-  #     - uses: actions/setup-python@v7
-  #       with:
-  #         python-version: "3.12"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
 
-  #     - run: pip install -r scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
 
-  #     - uses: hashicorp/setup-terraform@v4
-  #       with:
-  #         terraform_version: 1.15.8
-  #         terraform_wrapper: false
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+          terraform_wrapper: false
 
-  #     - uses: aws-actions/configure-aws-credentials@v6
-  #       with:
-  #         role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
-  #         aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gha-eks-infra-apply-dev
+          aws-region: ${{ env.AWS_REGION }}
 
-  #     - name: Apply every dev client, every stack (in order)
-  #       run: |
-  #         set -euo pipefail
-  #         for cfg in config/clients/*/dev.json; do
-  #           client=$(basename "$(dirname "$cfg")")
-  #           python scripts/config.py resolve --client "$client" --env dev > /dev/null
-  #           for stack in $(ls stacks | sort); do
-  #             echo "::group::apply $client/dev/$stack"
-  #             scripts/tf-stack.sh "$client" dev "$stack" apply
-  #             echo "::endgroup::"
-  #             echo "applied \`$client / dev / $stack\`" >> "$GITHUB_STEP_SUMMARY"
-  #           done
-  #         done
+      - name: Apply every dev client, every stack (in order)
+        run: |
+          set -euo pipefail
+          for cfg in config/clients/*/dev.json; do
+            client=$(basename "$(dirname "$cfg")")
+            python scripts/config.py resolve --client "$client" --env dev > /dev/null
+            for stack in $(ls stacks | sort); do
+              echo "::group::apply $client/dev/$stack"
+              scripts/tf-stack.sh "$client" dev "$stack" apply
+              echo "::endgroup::"
+              echo "applied \`$client / dev / $stack\`" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
