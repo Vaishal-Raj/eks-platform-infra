@@ -2,6 +2,14 @@ provider "aws" {
   region              = var.config.region
   allowed_account_ids = [var.config.account_id] # refuse to run against the wrong account
 
+  # Tags added by the organization's Cloud Custodian after resources are created.
+  # An SCP forbids deleting them, so Terraform must never try to manage them.
+  
+  ignore_tags {
+    keys         = ["Owner"]
+    key_prefixes = ["c7n-"]
+  }
+
   default_tags {
     tags = merge(var.config.tags, {
       Project     = "poc-gvr"
