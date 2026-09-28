@@ -3,7 +3,7 @@ locals {
 }
 
 module "network" {
-  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/network?ref=v0.4.0"
+  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/network?ref=v0.4.1"
 
   name             = local.name
   vpc_cidr         = var.config.vpc_cidr
