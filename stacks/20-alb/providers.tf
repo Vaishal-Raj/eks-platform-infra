@@ -4,7 +4,7 @@ provider "aws" {
 
   default_tags {
     tags = merge(var.config.tags, {
-      Project     = "eks-platform"
+      Project     = "poc-gvr"
       ManagedBy   = "terraform"
       Client      = var.config.client_id
       Environment = var.config.environment
