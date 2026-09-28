@@ -15,7 +15,7 @@ data "terraform_remote_state" "network" {
 }
 
 module "alb" {
-  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/alb?ref=v0.4.0"
+  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/alb?ref=v0.4.1"
 
   name                = local.name
   vpc_id              = data.terraform_remote_state.network.outputs.vpc_id
