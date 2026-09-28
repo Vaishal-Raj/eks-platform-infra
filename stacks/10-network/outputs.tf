@@ -46,8 +46,8 @@ output "vpce_security_group_id" {
 
 
 output "internet_gateway_id" {
-    description = "IGW ID (no routes), or null when edge is disabled"
-    value = module.network.internet_gateway_id
+  description = "IGW ID (no routes), or null when edge is disabled"
+  value       = module.network.internet_gateway_id
 }
 
 output "isolated_subnet_cidrs" {

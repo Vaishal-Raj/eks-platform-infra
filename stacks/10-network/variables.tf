@@ -20,7 +20,7 @@ variable "config" {
       enable_s3_gateway  = bool
     })
     edge = object({
-      enabled = bool 
+      enabled = bool
     })
   })
 }

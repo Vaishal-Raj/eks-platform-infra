@@ -9,7 +9,7 @@ module "network" {
   vpc_cidr         = var.config.vpc_cidr
   az_count         = var.config.network.az_count
   exclude_zone_ids = var.config.exclude_zone_ids
-  create_igw = var.config.edge.enabled #Cloudfront VPC origins need an IGW atatched (no routes)
+  create_igw       = var.config.edge.enabled #Cloudfront VPC origins need an IGW atatched (no routes)
   # Platform decision: every client runs EKS, whose Load Balancer Controller
   # places internal ALBs in subnets carrying this tag.
   private_subnet_tags = {
