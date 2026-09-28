@@ -4,7 +4,7 @@ provider "aws" {
 
   # Tags added by the organization's Cloud Custodian after resources are created.
   # An SCP forbids deleting them, so Terraform must never try to manage them.
-  
+
   ignore_tags {
     keys         = ["Owner"]
     key_prefixes = ["c7n-"]

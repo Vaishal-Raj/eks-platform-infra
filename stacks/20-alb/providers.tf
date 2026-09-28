@@ -6,7 +6,7 @@ provider "aws" {
     keys         = ["Owner"]
     key_prefixes = ["c7n-"]
   }
-  
+
   default_tags {
     tags = merge(var.config.tags, {
       Project     = "poc-gvr"
