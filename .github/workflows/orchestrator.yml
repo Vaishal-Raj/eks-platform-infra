@@ -29,6 +29,7 @@ on:
         options:
           - all
           - 10-network
+          - 20-alb
         default: all
       override_json:
         description: 'What-if (PLAN ONLY), e.g. {"network":{"az_count":3}}'

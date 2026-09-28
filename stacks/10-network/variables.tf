@@ -19,6 +19,9 @@ variable "config" {
       interface_services = list(string)
       enable_s3_gateway  = bool
     })
+    edge = object({
+      enabled = bool
+    })
   })
 }
 

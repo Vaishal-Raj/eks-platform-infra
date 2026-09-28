@@ -24,7 +24,9 @@
       "additionalProperties": false,
       "properties": {
         "network":   { "type": "object" },
-        "endpoints": { "type": "object" }
+        "endpoints": { "type": "object" },
+        "edge": {"type":"object"},
+        "alb": {"type":"object"}
       }
     }
   }
