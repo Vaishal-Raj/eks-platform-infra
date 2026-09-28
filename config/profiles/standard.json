@@ -14,5 +14,12 @@
       "elasticloadbalancing"
     ],
     "enable_s3_gateway": true
+  },
+  "edge":{
+    "enabled":true
+  },
+  "alb":{
+    "target_port":8000,
+    "deletion_protection":false
   }
 }

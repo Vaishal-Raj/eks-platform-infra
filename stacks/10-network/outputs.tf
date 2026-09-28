@@ -43,3 +43,14 @@ output "vpce_security_group_id" {
 # - Because vpc_endpoints has count, it's now a list of zero or one modules. 
 # one(module.vpc_endpoints[*].x) returns the value, or null when the list is empty. It's the same trick as the S3 endpoint inside the module.
 # - Later stacks (security groups, RDS) read these outputs, so export everything they'll need.
+
+
+output "internet_gateway_id" {
+    description = "IGW ID (no routes), or null when edge is disabled"
+    value = module.network.internet_gateway_id
+}
+
+output "isolated_subnet_cidrs" {
+  description = "Isolated subnet CIDRs"
+  value       = module.network.isolated_subnet_cidrs
+}

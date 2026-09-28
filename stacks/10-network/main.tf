@@ -3,13 +3,13 @@ locals {
 }
 
 module "network" {
-  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/network?ref=v0.3.0"
+  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/network?ref=v0.4.0"
 
   name             = local.name
   vpc_cidr         = var.config.vpc_cidr
   az_count         = var.config.network.az_count
   exclude_zone_ids = var.config.exclude_zone_ids
-
+  create_igw = var.config.edge.enabled #Cloudfront VPC origins need an IGW atatched (no routes)
   # Platform decision: every client runs EKS, whose Load Balancer Controller
   # places internal ALBs in subnets carrying this tag.
   private_subnet_tags = {
@@ -18,7 +18,7 @@ module "network" {
 }
 
 module "vpc_endpoints" {
-  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/vpc-endpoints?ref=v0.3.0"
+  source = "git::https://github.com/Vaishal-Raj/eks-platform-modules.git//modules/vpc-endpoints?ref=v0.4.0"
   count  = var.config.endpoints.enabled ? 1 : 0
 
   name               = local.name
